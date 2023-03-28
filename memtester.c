@@ -12,7 +12,7 @@
  *
  */
 
-#define __version__ "4.5.1"
+#define __version__ "4.6.0"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -23,12 +23,12 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <time.h>
 #include <errno.h>
 
 #include "types.h"
 #include "sizes.h"
 #include "tests.h"
-#include "output.h"
 
 #define EXIT_FAIL_NONSTARTER    0x01
 #define EXIT_FAIL_ADDRESSLINES  0x02
@@ -50,7 +50,7 @@ struct test tests[] = {
     { "Bit Flip", test_bitflip_comparison },
     { "Walking Ones", test_walkbits1_comparison },
     { "Walking Zeroes", test_walkbits0_comparison },
-#ifdef TEST_NARROW_WRITES
+#ifdef TEST_NARROW_WRITES    
     { "8-bit Writes", test_8bit_wide_random },
     { "16-bit Writes", test_16bit_wide_random },
 #endif
@@ -103,7 +103,7 @@ off_t physaddrbase = 0;
 /* Function definitions */
 void usage(char *me) {
     fprintf(stderr, "\n"
-            "Usage: %s [-p physaddrbase [-d device] [-u]] <mem>[B|K|M|G] [loops]\n",
+            "Usage: %s [-p physaddrbase [-d device]] <mem>[B|K|M|G] [loops]\n",
             me);
     exit(EXIT_FAIL_NONSTARTER);
 }
@@ -127,9 +127,6 @@ int main(int argc, char **argv) {
     int device_specified = 0;
     char *env_testmask = 0;
     ul testmask = 0;
-    int o_flags = O_RDWR | O_SYNC;
-
-    out_initialize();
 
     printf("memtester version " __version__ " (%d-bit)\n", UL_LEN);
     printf("Copyright (C) 2001-2020 Charles Cazabon.\n");
@@ -139,7 +136,7 @@ int main(int argc, char **argv) {
     pagesize = memtester_pagesize();
     pagesizemask = (ptrdiff_t) ~(pagesize - 1);
     printf("pagesizemask is 0x%tx\n", pagesizemask);
-
+    
     /* If MEMTESTER_TEST_MASK is set, we use its value as a mask of which
        tests we run.
      */
@@ -147,14 +144,14 @@ int main(int argc, char **argv) {
         errno = 0;
         testmask = strtoul(env_testmask, 0, 0);
         if (errno) {
-            fprintf(stderr, "error parsing MEMTESTER_TEST_MASK %s: %s\n",
+            fprintf(stderr, "error parsing MEMTESTER_TEST_MASK %s: %s\n", 
                     env_testmask, strerror(errno));
             usage(argv[0]); /* doesn't return */
         }
         printf("using testmask 0x%lx\n", testmask);
     }
 
-    while ((opt = getopt(argc, argv, "p:d:u")) != -1) {
+    while ((opt = getopt(argc, argv, "p:d:")) != -1) {
         switch (opt) {
             case 'p':
                 errno = 0;
@@ -183,12 +180,12 @@ int main(int argc, char **argv) {
                 break;
             case 'd':
                 if (stat(optarg,&statbuf)) {
-                    fprintf(stderr, "can not use %s as device: %s\n", optarg,
+                    fprintf(stderr, "can not use %s as device: %s\n", optarg, 
                             strerror(errno));
                     usage(argv[0]); /* doesn't return */
                 } else {
                     if (!S_ISCHR(statbuf.st_mode)) {
-                        fprintf(stderr, "can not mmap non-char device %s\n",
+                        fprintf(stderr, "can not mmap non-char device %s\n", 
                                 optarg);
                         usage(argv[0]); /* doesn't return */
                     } else {
@@ -196,21 +193,18 @@ int main(int argc, char **argv) {
                         device_specified = 1;
                     }
                 }
-                break;
-            case 'u':
-		o_flags &= ~O_SYNC;
-		break;
+                break;              
             default: /* '?' */
                 usage(argv[0]); /* doesn't return */
         }
     }
 
     if (device_specified && !use_phys) {
-        fprintf(stderr,
+        fprintf(stderr, 
                 "for mem device, physaddrbase (-p) must be specified\n");
         usage(argv[0]); /* doesn't return */
     }
-
+    
     if (optind >= argc) {
         fprintf(stderr, "need memory argument, in MB\n");
         usage(argv[0]); /* doesn't return */
@@ -278,7 +272,7 @@ int main(int argc, char **argv) {
     buf = NULL;
 
     if (use_phys) {
-        memfd = open(device_name, o_flags);
+        memfd = open(device_name, O_RDWR | O_SYNC);
         if (memfd == -1) {
             fprintf(stderr, "failed to open %s for physical memory: %s\n",
                     device_name, strerror(errno));
@@ -379,6 +373,14 @@ int main(int argc, char **argv) {
         aligned = buf;
     }
 
+    /* In theory, you might be able to get slightly better error detection if you randomly seed
+       the pseudo-random number generator and run memtester multiple times in sequence.
+       However, that benefit is probably very, very slight and won't matter.  Leaving it unseeded
+       results in a constant seed, so exactly the same values are used test-to-test, giving
+       better reproducibility, so this is disabled by default.  You can uncomment it to enable.
+       Note there are no security implications here */
+    /* srand(time(0)); */
+
     halflen = bufsize / 2;
     count = halflen / sizeof(ul);
     bufa = (ulv *) aligned;
@@ -406,7 +408,6 @@ int main(int argc, char **argv) {
                 continue;
             }
             printf("  %-20s: ", tests[i].name);
-            fflush(stdout);
             if (!tests[i].fp(bufa, bufb, count)) {
                 printf("ok\n");
             } else {
